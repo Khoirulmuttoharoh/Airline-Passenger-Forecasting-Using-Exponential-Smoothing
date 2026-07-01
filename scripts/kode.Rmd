@@ -1,0 +1,218 @@
+---
+title: "Tubes ADW"
+output: html_document
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+library(readr)
+library(dplyr)
+library(purrr)
+library(stringr)
+library(forecast)
+```
+
+## 1) List CSV
+
+```{r}
+files <- list.files("Dataset", pattern = "\\.csv$", full.names = TRUE)
+files <- files[!str_detect(files, "gabungan\\.csv$")]
+files
+```
+
+## 2) Skema
+
+```{r}
+schema_check <- map_df(files, function(f) {
+  x <- read_csv(
+    f,
+    col_names = FALSE,
+    show_col_types = FALSE
+  )
+
+  tibble(
+    file = basename(f),
+    n_col = ncol(x),
+    row1 = paste(unlist(x[1, ]), collapse = " | "),
+    row2 = paste(unlist(x[2, ]), collapse = " | "),
+    row3 = paste(unlist(x[3, ]), collapse = " | "),
+    row4 = paste(unlist(x[4, ]), collapse = " | ")
+  )
+})
+
+schema_check
+```
+
+## 3) Gabung File
+
+```{r}
+bulan_order <- c(
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+)
+
+hasil <- map_df(files, function(f) {
+  x <- read_csv(
+    f,
+    col_names = FALSE,
+    show_col_types = FALSE
+  )
+
+  tahun <- str_extract(basename(f), "20\\d{2}") %>% as.integer()
+
+  tibble(
+    tahun_berangkat = tahun,
+    bulan = x$X1[5:nrow(x)],
+    berangkat = x$X2[5:nrow(x)] %>% as.integer(),
+    tahun_tiba = tahun,
+    tiba = x$X3[5:nrow(x)] %>% as.integer(),
+    sumber_file = basename(f)
+  ) %>%
+    filter(!is.na(bulan), bulan != "") %>%
+    mutate(bulan = factor(bulan, levels = bulan_order)) %>%
+    arrange(tahun_berangkat, bulan) %>%
+    mutate(bulan = as.character(bulan))
+})
+
+out_file <- "Dataset/jumlah_penumpang_pesawat_2014_2024_gabungan.csv"
+write_csv(hasil, out_file)
+
+out_file
+nrow(hasil)
+head(hasil, 12)
+```
+
+## 4) Cek Null
+
+```{r}
+null_per_kolom <- hasil %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  tidyr::pivot_longer(
+    cols = everything(),
+    names_to = "kolom",
+    values_to = "jumlah_null"
+  )
+
+null_per_kolom
+
+jumlah_baris_punya_null <- hasil %>%
+  filter(if_any(everything(), is.na)) %>%
+  nrow()
+
+jumlah_baris_punya_null
+```
+
+## 5) Data Prep
+
+```{r}
+# Pilih target yang dianalisis: "berangkat" atau "tiba"
+target_var <- "berangkat"
+
+data_model <- hasil %>%
+  arrange(tahun_berangkat, factor(bulan, levels = bulan_order))
+
+ts_data <- ts(
+  data_model[[target_var]],
+  start = c(min(data_model$tahun_berangkat), 1),
+  frequency = 12
+)
+h <- 12
+
+hitung_metrik <- function(actual, fitted, metode) {
+  eval_data <- tibble(
+    actual = as.numeric(actual),
+    fitted = as.numeric(fitted)
+  ) %>%
+    filter(!is.na(actual), !is.na(fitted))
+
+  mse <- mean((eval_data$actual - eval_data$fitted)^2)
+  rmse <- sqrt(mse)
+  mape <- eval_data %>%
+    filter(actual != 0) %>%
+    summarise(nilai = mean(abs((actual - fitted) / actual)) * 100) %>%
+    pull(nilai)
+
+  tibble(
+    metode = metode,
+    MSE = mse,
+    RMSE = rmse,
+    MAPE = mape
+  )
+}
+
+ts_data
+```
+
+## 6) Single Exponential Smoothing (SES)
+
+```{r}
+ses_model <- forecast::ses(ts_data, h = h)
+plot(ses_model, main = paste("Single Exponential Smoothing (SES) -", target_var))
+ses_hasil <- tibble(
+  metode = "SES",
+  periode = time(ses_model$mean),
+  forecast = as.numeric(ses_model$mean),
+  lo_95 = as.numeric(ses_model$lower[, "95%"]),
+  hi_95 = as.numeric(ses_model$upper[, "95%"])
+)
+ses_hasil
+```
+
+## 7) Double Exponential Smoothing (DES/Holt)
+
+```{r}
+holt_model <- forecast::holt(ts_data, h = h)
+plot(holt_model, main = paste("Double Exponential Smoothing (Holt) -", target_var))
+holt_hasil <- tibble(
+  metode = "Holt (DES)",
+  periode = time(holt_model$mean),
+  forecast = as.numeric(holt_model$mean),
+  lo_95 = as.numeric(holt_model$lower[, "95%"]),
+  hi_95 = as.numeric(holt_model$upper[, "95%"])
+)
+holt_hasil
+```
+
+## 8) Perbandingan MSE, RMSE, dan MAPE SES vs Holt
+
+```{r}
+perbandingan_metrik <- bind_rows(
+  hitung_metrik(ts_data, ses_model$fitted, "SES"),
+  hitung_metrik(ts_data, holt_model$fitted, "Holt (DES)")
+)
+
+perbandingan_metrik
+```
+
+## 9) Perbandingan hasil ramalan SES vs Holt
+
+```{r}
+perbandingan_forecast <- tibble(
+  periode = time(ses_model$mean),
+  SES = as.numeric(ses_model$mean),
+  Holt_DES = as.numeric(holt_model$mean)
+)
+
+perbandingan_forecast
+```
+
+## 10) Plot gabungan SES dan Holt dalam grid
+
+```{r}
+par(mfrow = c(1, 2))
+
+plot(
+  ses_model,
+  main = paste("SES -", target_var),
+  xlab = "Periode",
+  ylab = target_var
+)
+
+plot(
+  holt_model,
+  main = paste("Holt (DES) -", target_var),
+  xlab = "Periode",
+  ylab = target_var
+)
+
+par(mfrow = c(1, 1))
+```
