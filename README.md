@@ -168,7 +168,6 @@ As a member of this project, I contributed to:
 airline-passenger-forecasting/
 │
 ├── README.md
-├── LICENSE
 │
 ├── data/
 │   └── jumlah_penumpang.csv
@@ -177,32 +176,15 @@ airline-passenger-forecasting/
 │   └── forecasting.R
 │
 ├── reports/
-│   ├── Final Report.pdf
 │   └── LinkedIn Carousel.pdf
-│
-├── dashboard/
-│   └── Forecast Dashboard.pdf
 │
 └── images/
     ├── cover.png
     ├── time-series-plot.png
     ├── ses-forecast.png
-    ├── des-forecast.png
-    ├── comparison.png
-    ├── evaluation.png
-    ├── workflow.png
-    └── github-qr.png
+    └── des-forecast.png
 ```
 
----
-
-# 📄 Report
-
-The complete project report is available in:
-
-```
-reports/Final Report.pdf
-```
 
 ---
 
